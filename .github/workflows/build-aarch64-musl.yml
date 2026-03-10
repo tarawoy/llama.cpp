@@ -1,0 +1,84 @@
+name: Build aarch64 musl
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+      - "b*"
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.13.0
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build
+
+      - name: Configure
+        env:
+          CC: "zig cc -target aarch64-linux-musl"
+          CXX: "zig c++ -target aarch64-linux-musl"
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DCMAKE_EXE_LINKER_FLAGS="-static" \
+            -DGGML_NATIVE=OFF \
+            -DLLAMA_OPENSSL=OFF \
+            -DLLAMA_BUILD_TESTS=OFF \
+            -DLLAMA_BUILD_EXAMPLES=OFF \
+            -DLLAMA_BUILD_COMMON=ON \
+            -DLLAMA_BUILD_TOOLS=ON \
+            -DLLAMA_BUILD_SERVER=ON
+
+      - name: Build
+        run: |
+          cmake --build build --parallel --target \
+            llama-cli \
+            llama-server \
+            llama-quantize \
+            llama-imatrix
+
+      - name: Inspect binaries
+        run: |
+          ls -lh build/bin
+          file build/bin/llama-cli || true
+          file build/bin/llama-server || true
+
+      - name: Package
+        run: |
+          mkdir -p dist/bin
+          cp build/bin/llama-cli dist/bin/
+          cp build/bin/llama-server dist/bin/
+          cp build/bin/llama-quantize dist/bin/
+          cp build/bin/llama-imatrix dist/bin/
+          tar -C dist -czf llama-${{ github.ref_name }}-aarch64-linux-musl.tar.gz bin
+          zip -r llama-${{ github.ref_name }}-aarch64-linux-musl.zip dist/bin
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: llama-aarch64-linux-musl
+          path: |
+            llama-${{ github.ref_name }}-aarch64-linux-musl.tar.gz
+            llama-${{ github.ref_name }}-aarch64-linux-musl.zip
+
+      - name: Publish release assets
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            llama-${{ github.ref_name }}-aarch64-linux-musl.tar.gz
+            llama-${{ github.ref_name }}-aarch64-linux-musl.zip
